@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword,GoogleAuthProvider,signInWithPopup } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebaseClient';
 import InputField from '@/components/ui/InputField';
@@ -141,6 +141,43 @@ export default function LoginPage() {
     }
   };
 
+  const handleGoogleLogin = async () =>{
+
+    setLoading(true);
+    setAlert({ type: '', message: '' });
+    const provider = new GoogleAuthProvider();
+    try{
+      const result = await signInWithPopup(auth,provider);
+      const user = result.user;
+
+      const token = await user.getIdToken();
+      console.log("Google OAuth Token:",token);
+
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        const userRole = userData.role;
+
+        setAlert({ type: 'success', message: 'Login successful! Redirecting...' });
+        setTimeout(() => {
+          if (userRole === 'teacher') {
+            router.push('/dashboard/teacher');
+          } else {
+            router.push('/dashboard/student');
+          }
+        }, 1500);
+      } else {
+        setAlert({ type: 'info', message: 'Welcome! Please complete your profile.' });
+      router.push(`/auth/complete-profile?uid=${user.uid}`);
+      }
+    } catch (error) {
+      console.error('Google login error:', error);
+      setAlert({ type: 'error', message: 'Google login failed. Please try again.' });
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full">
@@ -252,7 +289,7 @@ export default function LoginPage() {
             <div className="mt-6">
               <button
                 type="button"
-                disabled
+                onClick={handleGoogleLogin}
                 className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg shadow-sm bg-white dark:bg-gray-800 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
