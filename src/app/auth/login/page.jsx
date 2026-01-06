@@ -3,12 +3,13 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { signInWithEmailAndPassword,GoogleAuthProvider,signInWithPopup } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { signInWithEmailAndPassword,GoogleAuthProvider,signInWithPopup,signOut } from 'firebase/auth';
+import { doc, getDoc,setDoc } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebaseClient';
 import InputField from '@/components/ui/InputField';
 import Button from '@/components/ui/Button';
 import AlertMessage from '@/components/ui/AlertMessage';
+import SelectDropdown from '@/components/ui/SelectDropdown';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,6 +23,26 @@ export default function LoginPage() {
   });
 
   const [errors, setErrors] = useState({});
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+const [profileLoading, setProfileLoading] = useState(false);
+const [profileAlert, setProfileAlert] = useState({ type: '', message: '' });
+const [pendingUid, setPendingUid] = useState('');
+
+const [profileData, setProfileData] = useState({
+  batch: '',
+  contactNo: '',
+  email: '',
+  fullName: '',
+  nic: '',
+  role: '',
+  stream: '',
+});
+
+const [profileErrors, setProfileErrors] = useState({});
+const roleOptions = [
+  { value: 'student', label: '🎓 Student' },
+  { value: 'teacher', label: '👨‍🏫 Teacher' },
+];
 
   // Handle input changes
   const handleChange = (e) => {
@@ -169,7 +190,21 @@ export default function LoginPage() {
         }, 1500);
       } else {
         setAlert({ type: 'info', message: 'Welcome! Please complete your profile.' });
-      router.push(`/auth/complete-profile?uid=${user.uid}`);
+      setPendingUid(user.uid);
+setProfileData({
+  batch: '',
+  contactNo: '',
+  email: user.email ?? '',
+  fullName: user.displayName ?? '',
+  nic: '',
+  role: '',
+  stream: '',
+});
+setProfileErrors({});
+setProfileAlert({ type: 'info', message: 'Welcome! Please complete your profile.' });
+setIsProfileModalOpen(true);
+setLoading(false);
+return;
       }
     } catch (error) {
       console.error('Google login error:', error);
@@ -177,6 +212,90 @@ export default function LoginPage() {
       setLoading(false);
     }
   }
+
+
+  //pop up modal starts from here
+
+
+  const handleProfileChange = (e) => {
+  const { name, value } = e.target;
+  setProfileData((prev) => ({ ...prev, [name]: value }));
+  if (profileErrors[name]) {
+    setProfileErrors((prev) => ({ ...prev, [name]: '' }));
+  }
+};
+
+const validateProfile = () => {
+  const next = {};
+
+  if (!profileData.fullName.trim()) next.fullName = 'Full name is required';
+  if (!profileData.email.trim()) next.email = 'Email is required';
+  if (!profileData.role) next.role = 'Role is required';
+  if (!profileData.nic.trim()) next.nic = 'NIC is required';
+
+  if (!profileData.contactNo) {
+    next.contactNo = 'Contact number is required';
+  } else if (!/^\d+$/.test(String(profileData.contactNo))) {
+    next.contactNo = 'Contact number must be digits only';
+  }
+
+  if (profileData.role === 'student') {
+    if (!profileData.batch.trim()) next.batch = 'Batch is required for students';
+    if (!profileData.stream.trim()) next.stream = 'Stream is required for students';
+  }
+
+  setProfileErrors(next);
+  return Object.keys(next).length === 0;
+};
+
+const handleProfileCancel = async () => {
+  // optional but recommended: user is signed in already, so sign them out if they cancel
+  await signOut(auth);
+  setIsProfileModalOpen(false);
+  setPendingUid('');
+  setProfileAlert({ type: '', message: '' });
+  setProfileErrors({});
+};
+
+const handleProfileSubmit = async (e) => {
+  e.preventDefault();
+  setProfileAlert({ type: '', message: '' });
+
+  if (!validateProfile()) {
+    setProfileAlert({ type: 'error', message: 'Please fix the errors above.' });
+    return;
+  }
+
+  setProfileLoading(true);
+  try {
+    const now = new Date().toISOString();
+
+    await setDoc(
+      doc(db, 'users', pendingUid),
+      {
+        batch: profileData.batch,
+        contactNo: Number(profileData.contactNo),
+        email: profileData.email,
+        fullName: profileData.fullName,
+        nic: profileData.nic,
+        role: profileData.role,
+        stream: profileData.stream,
+        createdAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+
+    setIsProfileModalOpen(false);
+
+    if (profileData.role === 'teacher') router.push('/dashboard/teacher');
+    else router.push('/dashboard/student');
+  } catch (err) {
+    console.error('Profile save error:', err);
+    setProfileAlert({ type: 'error', message: err.message || 'Failed to save profile.' });
+    setProfileLoading(false);
+  }
+};
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
@@ -327,6 +446,105 @@ export default function LoginPage() {
           </Link>
         </p>
       </div>
+      {isProfileModalOpen && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+    <div className="absolute inset-0 bg-gray-900/50" onClick={handleProfileCancel} />
+    <div className="relative w-full max-w-lg bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6">
+      <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+        Complete your profile
+      </h3>
+
+      <AlertMessage
+        type={profileAlert.type}
+        message={profileAlert.message}
+        onClose={() => setProfileAlert({ type: '', message: '' })}
+      />
+
+      <form onSubmit={handleProfileSubmit} className="space-y-2">
+        <InputField
+          label="Full Name"
+          name="fullName"
+          value={profileData.fullName}
+          onChange={handleProfileChange}
+          error={profileErrors.fullName}
+          required
+          icon="👤"
+        />
+
+        <InputField
+          label="Email"
+          name="email"
+          type="email"
+          value={profileData.email}
+          onChange={handleProfileChange}
+          error={profileErrors.email}
+          required
+          icon="📧"
+        />
+
+        <SelectDropdown
+          label="Role"
+          name="role"
+          value={profileData.role}
+          onChange={handleProfileChange}
+          options={roleOptions}
+          error={profileErrors.role}
+          required
+          placeholder="Select your role"
+        />
+
+        <InputField
+          label="NIC"
+          name="nic"
+          value={profileData.nic}
+          onChange={handleProfileChange}
+          error={profileErrors.nic}
+          required
+          icon="🪪"
+        />
+
+        <InputField
+          label="Contact No"
+          name="contactNo"
+          type="number"
+          value={profileData.contactNo}
+          onChange={handleProfileChange}
+          error={profileErrors.contactNo}
+          required
+          icon="📞"
+        />
+
+        <InputField
+          label="Batch"
+          name="batch"
+          value={profileData.batch}
+          onChange={handleProfileChange}
+          error={profileErrors.batch}
+          placeholder={profileData.role === 'student' ? 'Required for students' : 'Optional'}
+        />
+
+        <InputField
+          label="Stream"
+          name="stream"
+          value={profileData.stream}
+          onChange={handleProfileChange}
+          error={profileErrors.stream}
+          placeholder={profileData.role === 'student' ? 'Required for students' : 'Optional'}
+        />
+
+        <div className="flex gap-3 pt-2">
+          <Button type="button" variant="ghost" onClick={handleProfileCancel} fullWidth>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" loading={profileLoading} fullWidth>
+            Save Profile
+          </Button>
+        </div>
+      </form>
     </div>
+  </div>
+)}
+    </div>
+    
   );
 }
